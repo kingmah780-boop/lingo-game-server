@@ -9,31 +9,29 @@ export default {
         online: true,
         name: "Lingo Game Server",
         game: "Two Player",
-        websocket: true
+        version: "2.0"
       });
     }
 
     if (url.pathname === "/match") {
+      if (request.headers.get("Upgrade") !== "websocket") {
+        return new Response("WebSocket required", { status: 426 });
+      }
+
       const id = env.GAME_ROOMS.idFromName("public-room");
-      const room = env.GAME_ROOMS.get(id);
-      return room.fetch(request);
+      return env.GAME_ROOMS.get(id).fetch(request);
     }
 
     return new Response("Not Found", { status: 404 });
   }
-};
-
-export class GameRoom extends DurableObject {
+};export class GameRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
+    this.scores = [0, 0];
   }
 
   async fetch(request) {
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("WebSocket required", { status: 426 });
-    }
-
     const players = this.ctx.getWebSockets();
 
     if (players.length >= 2) {
@@ -46,18 +44,22 @@ export class GameRoom extends DurableObject {
 
     this.ctx.acceptWebSocket(server);
 
+    server.serializeAttachment({
+      player: players.length
+    });
+
     server.send(JSON.stringify({
       type: "waiting",
       message: "منتظر بازیکن دوم هستیم..."
     }));
 
-    const currentPlayers = this.ctx.getWebSockets();
+    const current = this.ctx.getWebSockets();
 
-    if (currentPlayers.length === 2) {
-      for (const player of currentPlayers) {
+    if (current.length === 2) {
+      for (const player of current) {
         player.send(JSON.stringify({
           type: "game_start",
-          message: "حریف پیدا شد! بازی شروع شد."
+          message: "حریف پیدا شد!"
         }));
       }
     }
@@ -66,18 +68,64 @@ export class GameRoom extends DurableObject {
       status: 101,
       webSocket: client
     });
-  }
+  }async webSocketMessage(ws, message) {
+    let data;
 
-  async webSocketMessage(ws, message) {
-    for (const player of this.ctx.getWebSockets()) {
+    try {
+      data = JSON.parse(message);
+    } catch {
+      ws.send(JSON.stringify({
+        type: "error",
+        message: "پیام نامعتبر است"
+      }));
+      return;
+    }
+
+    const attachment = ws.deserializeAttachment();
+    const players = this.ctx.getWebSockets();
+
+    if (!attachment || !players.includes(ws)) return;
+
+    if (data.type === "score") {
+      const score = Number(data.score);
+
+      if (!Number.isInteger(score)  score < 0  score > 1000) return;
+
+      this.scores[attachment.player] = score;
+
+      for (const player of players) {
+        player.send(JSON.stringify({
+          type: "score_update",
+          scores: this.scores
+        }));
+      }
+
+      return;
+    }
+
+    if (data.type === "finish") {
+      for (const player of players) {
+        player.send(JSON.stringify({
+          type: "game_finished",
+          scores: this.scores
+        }));
+      }
+
+      return;
+    }
+
+    for (const player of players) {
       if (player !== ws) {
-        player.send(message);
+        player.send(JSON.stringify({
+          type: "message",
+          data
+        }));
       }
     }
-  }
+  }async webSocketClose(ws) {
+    const players = this.ctx.getWebSockets();
 
-  async webSocketClose(ws) {
-    for (const player of this.ctx.getWebSockets()) {
+    for (const player of players) {
       if (player !== ws) {
         player.send(JSON.stringify({
           type: "opponent_left",
