@@ -1,3 +1,4 @@
+
 import { DurableObject } from "cloudflare:workers";
 
 export default {
@@ -9,7 +10,7 @@ export default {
         online: true,
         name: "Lingo Game Server",
         game: "Two Player",
-        version: "2.0"
+        version: "2.1"
       });
     }
 
@@ -19,12 +20,16 @@ export default {
       }
 
       const id = env.GAME_ROOMS.idFromName("public-room");
-      return env.GAME_ROOMS.get(id).fetch(request);
+      const room = env.GAME_ROOMS.get(id);
+
+      return room.fetch(request);
     }
 
     return new Response("Not Found", { status: 404 });
   }
-};export class GameRoom extends DurableObject {
+};
+
+export class GameRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
@@ -33,8 +38,23 @@ export default {
 
   async fetch(request) {
     const players = this.ctx.getWebSockets();
+    const occupiedSlots = new Set();
 
-    if (players.length >= 2) {
+    for (const player of players) {
+      const attachment = player.deserializeAttachment();
+
+      if (attachment && Number.isInteger(attachment.player)) {
+        occupiedSlots.add(attachment.player);
+      }
+    }
+
+    let playerSlot = 0;
+
+    while (occupiedSlots.has(playerSlot) && playerSlot < 2) {
+      playerSlot++;
+    }
+
+    if (playerSlot >= 2) {
       return new Response("Room is full", { status: 409 });
     }
 
@@ -45,7 +65,7 @@ export default {
     this.ctx.acceptWebSocket(server);
 
     server.serializeAttachment({
-      player: players.length
+      player: playerSlot
     });
 
     server.send(JSON.stringify({
@@ -53,10 +73,10 @@ export default {
       message: "منتظر بازیکن دوم هستیم..."
     }));
 
-    const current = this.ctx.getWebSockets();
+    const currentPlayers = this.ctx.getWebSockets();
 
-    if (current.length === 2) {
-      for (const player of current) {
+    if (currentPlayers.length === 2) {
+      for (const player of currentPlayers) {
         player.send(JSON.stringify({
           type: "game_start",
           message: "حریف پیدا شد!"
@@ -68,10 +88,16 @@ export default {
       status: 101,
       webSocket: client
     });
-  }async webSocketMessage(ws, message) {
+  }
+
+  async webSocketMessage(ws, message) {
     let data;
 
     try {
+      if (typeof message !== "string") {
+        throw new Error("Text message required");
+      }
+
       data = JSON.parse(message);
     } catch {
       ws.send(JSON.stringify({
@@ -81,15 +107,41 @@ export default {
       return;
     }
 
+    if (!data || typeof data !== "object") {
+      ws.send(JSON.stringify({
+        type: "error",
+        message: "ساختار پیام نامعتبر است"
+      }));
+      return;
+    }
+
     const attachment = ws.deserializeAttachment();
     const players = this.ctx.getWebSockets();
 
-    if (!attachment || !players.includes(ws)) return;
+    if (
+      !attachment ||
+      !Number.isInteger(attachment.player) ||
+      attachment.player < 0 ||
+      attachment.player > 1 ||
+      !players.includes(ws)
+    ) {
+      return;
+    }
 
     if (data.type === "score") {
       const score = Number(data.score);
 
-      if (!Number.isInteger(score)  score < 0  score > 1000) return;
+      if (
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 1000
+      ) {
+        ws.send(JSON.stringify({
+          type: "error",
+          message: "امتیاز نامعتبر است"
+        }));
+        return;
+      }
 
       this.scores[attachment.player] = score;
 
@@ -122,16 +174,31 @@ export default {
         }));
       }
     }
-  }async webSocketClose(ws) {
-    const players = this.ctx.getWebSockets();
+  }
 
-    for (const player of players) {
-      if (player !== ws) {
-        player.send(JSON.stringify({
-          type: "opponent_left",
-          message: "حریف از بازی خارج شد."
-        }));
-      }
+  async webSocketClose(ws) {
+    const attachment = ws.deserializeAttachment();
+
+    if (
+      attachment &&
+      Number.isInteger(attachment.player) &&
+      attachment.player >= 0 &&
+      attachment.player <= 1
+    ) {
+      this.scores[attachment.player] = 0;
+    }
+
+    const remainingPlayers = this.ctx.getWebSockets();
+
+    for (const player of remainingPlayers) {
+      player.send(JSON.stringify({
+        type: "opponent_left",
+        message: "حریف از بازی خارج شد."
+      }));
+    }
+
+    if (remainingPlayers.length === 0) {
+      this.scores = [0, 0];
     }
   }
 }
