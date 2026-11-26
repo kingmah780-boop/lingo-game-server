@@ -1,3 +1,83 @@
+
+Loading older messages…
+Continued from
+راه پول درآوردن (26)
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lingo-game-server",
+  "main": "Worker.js",
+  "compatibility_date": "2026-11-24",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_ROOMS",
+        "class_name": "GameRoom"
+      }
+    ]
+  },
+  "exports": {
+    "GameRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}
+…
+Worked for 14s
+
+پیداش کردیم! 🎯 فایل تنظیماتت درست به نظر می‌رسه و مسیر Worker.js هم صحیح نوشته شده.
+
+علت خطا مشخص شد: نسخه Wrangler که در گزارش دیدیم 3.90.0 است؛ این نسخه از فایل wrangler.jsonc پشتیبانی نمی‌کند. پشتیبانی از این فرمت از نسخه 3.91.0 اضافه شده است. 
+GitHub+1
+راه‌حل: به‌روزرسانی Wrangler
+
+حالا فقط یک فایل را تغییر می‌دهیم.
+
+    در GitHub وارد پوشه .github شو.
+
+    وارد workflows شو.
+
+    فایل deploy.yml را باز کن.
+
+    روی مداد Edit بزن.
+
+این خط را پیدا کن:
+
+uses: cloudflare/wrangler-action@v3
+
+و به این تغییر بده:
+
+uses: cloudflare/wrangler-action@v4
+
+زیر apiToken و accountId هم این خط را اضافه کن:
+
+wranglerVersion: "4"
+
+این روش با مستندات رسمی Cloudflare هماهنگ است. 
+GitHub+1
+
+فعلاً ذخیره نکن؛ اول بگو فایل deploy.yml را باز کردی تا بقیه‌اش را با هم بررسی کنیم.
+خو این تغیرات رو کد انجام بده بعد به من تحویل بده تا جایگزین کنم
+
+انجام شد! فایل کامل deploy.yml را اصلاح کردم. تغییرات شامل استفاده از Wrangler نسخه ۴ و نسخه جدید اکشن Cloudflare است.
+📥 دریافت فایل آماده
+جایگزین کردن فایل در GitHub
+
+۱. وارد پوشه .github/workflows شو.
+۲. فایل قبلی deploy.yml را باز کن.
+۳. روی مداد Edit بزن.
+۴. تمام کد قبلی را پاک کن و محتوای فایل جدید را جایگزین کن.
+۵. روی Commit changes بزن.
+
+🔒 به Secretها دست نزن؛ همان‌هایی که قبلاً ساختی باقی بمانند.
+
+بعد از جایگزینی، عکس بفرست تا اجرای جدید را بررسی کنیم.
+deploy.ymlCode
+
+
+
+    
+  
 name: Deploy Lingo Game Server
 
 on:
@@ -9,13 +89,18 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Deploy to Cloudflare
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
           command: deploy
+
